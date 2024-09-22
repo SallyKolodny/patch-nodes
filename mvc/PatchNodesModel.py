@@ -5,6 +5,7 @@ The MVC "Model" class.
 """
 
 import os
+import sqlite3
 
 class PatchNodesModel():
 
@@ -17,41 +18,84 @@ class PatchNodesModel():
     if not os.path.exists(hosts_dir):
       os.mkdir(hosts_dir)
     # self._hosts_file is the file where patch-nodes.py stores the list of managed hosts
-    self._hosts_file = hosts_dir + "/patch-nodes-hosts.txt"
-    # Get a list of managed hosts
-    self._hosts = self.read_hosts_file()
+    self._db_file = hosts_dir + "/patch-nodes-hosts.db"
+    self._con = None
+    self._cur = None
+    self.init_db()
 
-  def add_host(self, host):
+  def __del__(self):
     """
-    Add a new host to the list of managed hosts and write the new list to the managed hosts file.
-    If the host already exists in the managed host list, then do nothing. 
+    Destructor. Closes the sqlite3 database 
     """
-    pass
+    if self._con is not None:
+      con = self.con()
+      con.close()
 
-  def hosts(self):
+  def con(self):
+    """
+    Get method. Return a sqlite3 database connection object.
+    """
+    if not self._con:
+      db_file = self.db_file()
+      self._con = sqlite3.connect(db_file)
+    return self._con
+  
+  def cur(self):
+    """
+    Get method. Return a sqlite3 database cursor object.
+    """
+    if not self._cur:
+      con = self.con()
+      self._cur = con.cursor()
+    return self._cur
+    
+  def add_host(self, host, category, description):
+    """
+    Add a new host to the db. If the host exists already, return an error string otherwise return
+    True. It is the responsibility of the MVC Controller to check and deal with these two cases.
+    """
+    cur = self.cur()
+    new_row = [(host, category, description)]
+    if self.host_exists(host):
+      return "ERROR: Duplicate hostname"
+    with self.con() as con:
+      cur.execute("INSERT INTO host VALUES(?, ?, ?)", new_row)
+      con.commit()
+    return True
+
+  def get_hosts(self):
     """
     Get method. Return the list of managed hosts.
     """
-    return self._hosts
+    pass
+  
+  def db_file(self):
+    """
+    Get method. Return the fully qualified file path to the file containing the sqlite3 database.
+    """
+    return self._db_file
+  
+  def host_exists(self, host):
+    """
+    Check if a host exists in the hosts table.
+    """
+    cur = self.cur()
+    res = cur.execute("SELECT host FROM host WHERE host=?", (host))
+    if res.fetchone() is None:
+      return True
+    else:
+      return False
 
-  def hosts_file(self):
+  def init_db(self):
     """
-    Get method. Return the fully qualified filename that holds the list of managed hosts.
+    Initialize the sqlite3 database. Create the "hosts" table if it doesn't exist.
     """
-    return self._hosts_file
-
-  def read_hosts_file(self):
-    """
-    Get method. Read the list of managed hosts from the file that stores this list.
-    """
-    hosts_file = self.hosts_file()
-    hosts_list = []
-    # Check that the hosts_file exists
-    if os.path.isfile(hosts_file):
-      # Open the file
-      with open(hosts_file) as file:
-        # Step through the file contents, line by line
-        for line in file:
-          hosts_list.append(line.rstrip())
-    return hosts_list
-
+    cur = self.cur()
+    res = cur.execute("SELECT name from sqlite_master WHERE name='host'")
+    if not res:
+      with self.con() as con:
+        cur.execute("CREATE TABLE host(host TEXT, category TEXT , description TEXT, patch INTEGER)")
+        cur.execute("CREATE TABLE category(category TEXT)")
+        categories = [('Dev'), ('QA'), ('Prod')]
+        cur.executemany("INSERT INTO category VALUES(?)", categories)
+        con.commit()
